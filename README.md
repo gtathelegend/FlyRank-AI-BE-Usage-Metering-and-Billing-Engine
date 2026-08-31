@@ -3,7 +3,39 @@
 An enterprise-grade, high-concurrency **LLM Usage Metering & Billing Engine** built with Node.js, Express, TypeScript, PostgreSQL, and Stripe Test Mode. Features real-time pre-check quota enforcement, database-level composite unique constraint idempotency protection, zero-drift integer micro-cents financial arithmetic, Stripe Checkout sessions, and signature-verified webhook state synchronization.
 
 > [!IMPORTANT]
-> **TEST MODE ONLY**: Real payment processing is strictly disabled. All Stripe operations utilize Test Mode credentials (`sk_test_*`, `whsec_*`). Real card data is never accepted or processed.
+> **TEST MODE ONLY**: Stripe Test Mode is used exclusively (`sk_test_*`, `whsec_*`). Real payment processing is strictly disabled. Only Stripe test payment methods (such as test card `4242 4242 4242 4242`) are used during development and E2E verification. No real card data is processed.
+
+---
+
+## System Architecture & Data Flow
+
+```text
+Client
+  |
+  +--> POST /generate ------> MeterService ------> PostgreSQL
+  |
+  +--> GET /usage ----------> UsageService -------> PostgreSQL
+  |
+  +--> POST /checkout/session
+              |
+              v
+        Stripe Checkout
+              |
+              v
+        Stripe Webhooks
+              |
+              v
+    Signature Verification
+              |
+              v
+    Webhook Deduplication
+              |
+              v
+          PostgreSQL
+              |
+              v
+       Pro Subscription
+```
 
 ---
 
@@ -23,9 +55,9 @@ Ensure `.env` contains local placeholders:
 PORT=8000
 NODE_ENV=development
 DATABASE_URL=postgresql://billing_user:billing_password@localhost:5432/flyrank_billing_db
-STRIPE_SECRET_KEY=sk_test_51PlaceholderSecretKeyDoNotCommit12345
-STRIPE_WEBHOOK_SECRET=whsec_PlaceholderWebhookSecretDoNotCommit12345
-STRIPE_PRICE_PRO=price_1PlaceholderProPriceId12345
+STRIPE_SECRET_KEY=sk_test_REPLACE_ME
+STRIPE_WEBHOOK_SECRET=whsec_REPLACE_ME
+STRIPE_PRICE_PRO=price_REPLACE_ME
 ```
 
 > [!NOTE]
@@ -133,17 +165,36 @@ npm test
 
 ---
 
-## Key System Protections
+## Key Security & System Protections
 
-1. **Cryptographic Webhook Signature Verification**: Uses raw HTTP request body buffers to construct and verify HMAC-SHA256 signatures via `stripe.webhooks.constructEvent`. Invalid signatures yield **HTTP 400 Bad Request**.
-2. **Database Webhook Deduplication**: `CONSTRAINT idx_stripe_events_event_id UNIQUE(stripe_event_id)` ensures at-least-once Stripe webhook events are processed exactly once. Duplicate events return **HTTP 200 OK** without double-applying state changes.
-3. **Database-Level Metering Idempotency**: `CONSTRAINT uk_tenant_idempotency UNIQUE(tenant_id, idempotency_key)` protects against concurrent retry race conditions.
-4. **Pre-Check Quota Enforcement**: Synchronously checks remaining quota inside database transactions before execution. Limit violations yield **HTTP 429 Too Many Requests**. Inactive subscription states yield **HTTP 402 Payment Required**.
+1. **Environment-Only Secret Loading**: `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are strictly read from process environment variables. No credentials or secret keys are committed or exposed in client API responses. The `.env` file is git-ignored.
+2. **Cryptographic Webhook Signature Verification**: Uses preserved raw HTTP request body buffers (`express.raw({ type: 'application/json' })`) to construct and verify HMAC-SHA256 signatures via `stripe.webhooks.constructEvent`. Invalid signatures yield **HTTP 400 Bad Request**.
+3. **Database Webhook Deduplication**: Stripe webhook events are processed idempotently using a unique database constraint on `stripe_event_id`. Duplicate deliveries return **HTTP 200 OK** without reapplying subscription state.
+4. **Database-Level Metering Idempotency**: `CONSTRAINT uk_tenant_idempotency UNIQUE(tenant_id, idempotency_key)` protects against concurrent retry race conditions.
+5. **Tenant Isolation & Quota Enforcement**: Tenant data is isolated using `tenant_id`. Synchronously checks remaining quota inside PostgreSQL transactions before execution. Limit violations yield **HTTP 429 Too Many Requests**. Inactive subscription states yield **HTTP 402 Payment Required**.
 
 ---
 
 ## Honest Limitations
 
-1. **Stripe Test Mode Only**: Configured strictly for Stripe Test Mode (`sk_test_*`). Real payments are not processed.
+1. **Stripe Test Mode Only**: Configured strictly for Stripe Test Mode (`sk_test_*`). Production payments are not supported.
 2. **Simulated AI Completion**: The billable `/generate` endpoint simulates AI token usage and completion text rather than invoking live external LLM APIs (OpenAI/Anthropic).
-3. **Single-Instance Background Scheduler**: The background reconciliation job runs via simple periodic scheduling within the process rather than a distributed worker queue (like BullMQ/Celery).
+3. **In-Process Scheduler**: The background reconciliation job runs via an in-process scheduler rather than a distributed worker queue (like BullMQ/Celery).
+
+---
+
+## Verification
+
+- **TypeScript build**: PASS (`npm run build`)
+- **Automated tests**: 23/23 passed (`npm test`)
+- **PostgreSQL E2E verification**: PASS
+- **Stripe Test Mode Checkout**: PASS (`POST /checkout/session` → HTTP 200)
+- **Stripe webhook signature verification**: PASS (HMAC-SHA256 validated via `stripe.webhooks.constructEvent`)
+- **`checkout.session.completed`**: HTTP 200 (`received: true`, `processed: true`)
+- **`customer.subscription.created`**: HTTP 200 (`received: true`, `processed: true`)
+- **`customer.subscription.updated`**: HTTP 200 (`received: true`, `processed: true`)
+- **Webhook idempotency replay**: PASS (`duplicate: true`, `processed: false`)
+- **Duplicate Stripe event records**: 0 (Unique constraint enforced on `stripe_event_id`)
+- **Demo tenant Free → Pro upgrade**: PASS
+- **`GET /usage` reflects Pro limits**: PASS (AI token limit upgraded to 5,000,000)
+- **Secret scan**: PASS (All keys loaded from environment; `.env` gitignored)

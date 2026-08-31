@@ -67,6 +67,10 @@ describe('Stripe Checkout & Webhook Service Layer', () => {
   });
 
   it('POST /webhooks/stripe should handle valid signed customer.subscription.updated and replay idempotently', async () => {
+    const { pool } = await import('../config/database.js');
+    const unitTenantId = '00000000-0000-0000-0000-000000000002';
+    await pool.query("INSERT INTO tenants (id, name) VALUES ($1, 'Unit Test Tenant') ON CONFLICT DO NOTHING;", [unitTenantId]);
+
     const stripeSecretKey = CONFIG.STRIPE.SECRET_KEY;
     const webhookSecret = CONFIG.STRIPE.WEBHOOK_SECRET;
     const stripe = new Stripe(stripeSecretKey, { apiVersion: '2023-10-16' });
@@ -84,7 +88,7 @@ describe('Stripe Checkout & Webhook Service Layer', () => {
           customer: 'cus_unit_test',
           status: 'active',
           metadata: {
-            tenant_id: '00000000-0000-0000-0000-000000000001',
+            tenant_id: unitTenantId,
             plan_id: 'pro',
           },
         },
@@ -117,8 +121,7 @@ describe('Stripe Checkout & Webhook Service Layer', () => {
     assert.equal(res2.body.duplicate, true);
     assert.equal(res2.body.processed, false);
 
-    // Reset demo tenant subscription back to free for subsequent tests
-    const { pool } = await import('../config/database.js');
-    await pool.query("UPDATE subscriptions SET plan_id = 'free', stripe_subscription_id = NULL WHERE tenant_id = $1;", ['00000000-0000-0000-0000-000000000001']);
+    // Cleanup unit test tenant subscription
+    await pool.query('DELETE FROM subscriptions WHERE tenant_id = $1;', [unitTenantId]);
   });
 });
