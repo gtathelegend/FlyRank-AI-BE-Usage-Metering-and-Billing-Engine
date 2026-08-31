@@ -3,11 +3,14 @@
   "version": "1.0.0",
   "description": "LLM Usage Metering & Billing Engine Capstone Project",
   "main": "dist/index.js",
+  "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "node ./node_modules/typescript/lib/tsc.js",
     "start": "node dist/index.js",
-    "dev": "tsx watch src/index.ts",
-    "test": "jest --passWithNoTests"
+    "dev": "node ./node_modules/tsx/dist/cli.mjs watch src/index.ts",
+    "migrate": "node ./node_modules/tsx/dist/cli.mjs src/db/migrate.ts",
+    "seed": "node ./node_modules/tsx/dist/cli.mjs src/db/seed.ts",
+    "test": "node ./node_modules/tsx/dist/cli.mjs --test src/tests/*.test.ts"
   },
   "keywords": [
     "metering",
@@ -28,11 +31,10 @@
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
-    "@types/jest": "^29.5.12",
     "@types/node": "^20.11.30",
     "@types/pg": "^8.11.4",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.2",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^6.3.4",
     "tsx": "^4.7.1",
     "typescript": "^5.4.3"
   }
