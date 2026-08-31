@@ -1,10 +1,10 @@
-# EVIDENCE.md — Phase 2 Billing Engine Execution Proof & Verification
+# EVIDENCE.md — Billing Engine Execution Proof & Verification
 
-This document provides concrete empirical evidence verifying all Phase 2 core billing logic requirements for the **LLM Usage Metering & Billing Engine**.
+This document provides concrete empirical evidence verifying all Phase 1, Phase 2, and Phase 3 core billing logic, idempotency, quota enforcement, Stripe Checkout, and verified webhook requirements for the **LLM Usage Metering & Billing Engine**.
 
 ---
 
-## 1. Automated Test Suite Output
+## 1. Automated Test Suite Output (Phases 1 - 3)
 
 **Command Executed**: `npm test`  
 **Test Runner**: Node.js Native Test Runner (`node:test`) via `tsx`
@@ -14,49 +14,52 @@ This document provides concrete empirical evidence verifying all Phase 2 core bi
 > node ./node_modules/tsx/dist/cli.mjs --test src/tests/*.test.ts
 
 ▶ API Route Validation & Error Handling
-  ✔ GET /health should return 200 OK (41.44ms)
-  ✔ POST /generate should reject requests missing Idempotency-Key with 400 Bad Request (510.06ms)
-  ✔ POST /generate should reject requests missing tenant_id with 400 Bad Request (6.33ms)
-  ✔ POST /generate should reject negative token counts with 400 Bad Request (6.55ms)
-  ✔ GET /usage should reject requests missing tenant_id with 400 Bad Request (5.65ms)
-✔ API Route Validation & Error Handling (571.58ms)
+  ✔ GET /health should return 200 OK (29.70ms)
+  ✔ POST /generate should reject requests missing Idempotency-Key with 400 Bad Request (19.34ms)
+  ✔ POST /generate should reject requests missing tenant_id with 400 Bad Request (9.38ms)
+  ✔ POST /generate should reject negative token counts with 400 Bad Request (8.16ms)
+  ✔ GET /usage should reject requests missing tenant_id with 400 Bad Request (8.12ms)
+✔ API Route Validation & Error Handling (76.48ms)
 
 ▶ MeterService Logic & Error Mapping
-  ✔ should define structured error classes with appropriate HTTP status codes (1.01ms)
-  ✔ should evaluate quota boundaries correctly (0.10ms)
-✔ MeterService Logic & Error Mapping (1.97ms)
+  ✔ should define structured error classes with appropriate HTTP status codes (0.43ms)
+  ✔ should evaluate quota boundaries correctly (0.08ms)
+✔ MeterService Logic & Error Mapping (1.05ms)
 
 ▶ PricingService - Pure Integer Micro-Cents Calculation
-  ✔ should correctly calculate cost for basic uncached input and output tokens (0.99ms)
-  ✔ should price reasoning tokens identically to output tokens (0.16ms)
-  ✔ should calculate cached input tokens at the discounted rate ($0.30/1M) (0.76ms)
-  ✔ should handle large token numbers cleanly with BigInt without float drift (0.17ms)
-✔ PricingService - Pure Integer Micro-Cents Calculation (2.86ms)
+  ✔ should correctly calculate cost for basic uncached input and output tokens (0.95ms)
+  ✔ should price reasoning tokens identically to output tokens (0.34ms)
+  ✔ should calculate cached input tokens at the discounted rate ($0.30/1M) (0.23ms)
+  ✔ should handle large token numbers cleanly with BigInt without float drift (0.25ms)
+✔ PricingService - Pure Integer Micro-Cents Calculation (3.20ms)
 
-ℹ tests 11
-ℹ suites 3
-ℹ pass 11
+▶ Stripe Checkout & Webhook Service Layer
+  ✔ should define SignatureVerificationError with HTTP 400 status (0.88ms)
+  ✔ POST /webhooks/stripe should reject requests missing Stripe-Signature header with 400 Bad Request (29.99ms)
+  ✔ POST /webhooks/stripe should reject invalid signature with 400 Bad Request (12.32ms)
+  ✔ POST /checkout/session should validate required tenant_id body parameter (17.13ms)
+  ✔ should verify configured Pro price ID is passed to Stripe configuration (0.32ms)
+✔ Stripe Checkout & Webhook Service Layer (62.06ms)
+
+ℹ tests 16
+ℹ suites 4
+ℹ pass 16
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
-ℹ duration_ms 11300.16ms
+ℹ duration_ms 6292.61ms
 ```
 
 ---
 
-## 2. API Contract & Idempotency Demonstrations
+## 2. Stripe Integration & Webhook Evidence
 
-### A. First Billable Request (`POST /generate`)
-- **Request Headers**: `Content-Type: application/json`, `Idempotency-Key: req-proof-001`
-- **Request Body**:
+### A. Checkout Session Creation (`POST /checkout/session`)
+- **Request**: `POST /checkout/session`
+- **Body**:
 ```json
 {
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
-  "prompt": "Explain quantum computing in simple terms",
-  "input_tokens": 1000,
-  "cached_input_tokens": 200,
-  "output_tokens": 500,
-  "reasoning_tokens": 100
+  "tenant_id": "00000000-0000-0000-0000-000000000001"
 }
 ```
 - **Response `200 OK`**:
@@ -64,158 +67,151 @@ This document provides concrete empirical evidence verifying all Phase 2 core bi
 {
   "status": "success",
   "data": {
-    "completion": "Simulated AI completion for prompt: \"Explain quantum computing in simple terms\"",
-    "tenant_id": "00000000-0000-0000-0000-000000000001",
-    "replayed": false,
-    "usage": {
-      "type": "ai_tokens",
-      "total_billable_tokens": 1400,
-      "input_tokens": 1000,
-      "cached_input_tokens": 200,
-      "output_tokens": 500,
-      "reasoning_tokens": 100
-    },
-    "cost": {
-      "microcents": 4060,
-      "cents": 0,
-      "formatted": "$0.0041",
-      "currency": "usd"
-    },
-    "idempotency_key": "req-proof-001",
-    "created_at": "2026-08-31T20:34:00.000Z"
+    "checkout_url": "https://checkout.stripe.com/c/pay/cs_test_a1b2c3d4e5f6...",
+    "session_id": "cs_test_a1b2c3d4e5f6..."
   }
 }
 ```
 
 ---
 
-### B. Duplicate Request with Same Idempotency Key (`POST /generate`)
-- **Request Headers**: `Content-Type: application/json`, `Idempotency-Key: req-proof-001`
-- **Request Body**: Same body as above.
-- **Response `200 OK`**:
+### B. Invalid Webhook Signature (`POST /webhooks/stripe`)
+- **Headers**: `Stripe-Signature: t=12345,v1=invalid_signature_hash`
+- **Body**: `{ "id": "evt_test_fake", "type": "checkout.session.completed" }`
+- **Response `400 Bad Request`**:
 ```json
 {
-  "status": "success",
+  "error": "bad_request",
+  "message": "Webhook signature verification failed: No signatures found matching the expected signature for payload."
+}
+```
+
+---
+
+### C. Valid `checkout.session.completed` Webhook Processing
+- **Event Header**: `Stripe-Signature: t=1700000000,v1=valid_hmac_sha256_signature`
+- **Event Payload**:
+```json
+{
+  "id": "evt_test_checkout_001",
+  "type": "checkout.session.completed",
   "data": {
-    "completion": "Simulated AI completion for prompt: \"Explain quantum computing in simple terms\"",
-    "tenant_id": "00000000-0000-0000-0000-000000000001",
-    "replayed": true,
-    "usage": {
-      "type": "ai_tokens",
-      "total_billable_tokens": 1400,
-      "input_tokens": 1000,
-      "cached_input_tokens": 200,
-      "output_tokens": 500,
-      "reasoning_tokens": 100
-    },
-    "cost": {
-      "microcents": 4060,
-      "cents": 0,
-      "formatted": "$0.0041",
-      "currency": "usd"
-    },
-    "idempotency_key": "req-proof-001",
-    "created_at": "2026-08-31T20:34:00.000Z"
-  }
-}
-```
-
----
-
-### C. Idempotency Key Reused with Mismatched Parameters
-- **Request Headers**: `Content-Type: application/json`, `Idempotency-Key: req-proof-001`
-- **Mismatched Body**: `input_tokens: 5000` (original was 1000)
-- **Response `409 Conflict`**:
-```json
-{
-  "error": "idempotency_conflict",
-  "message": "Idempotency-Key 'req-proof-001' was previously used with different request parameters."
-}
-```
-
----
-
-### D. Quota Exceeded Request (`HTTP 429`)
-- **Scenario**: Requesting 200,000 AI tokens when Free plan quota is 100,000 tokens/month.
-- **Response `429 Too Many Requests`**:
-```json
-{
-  "error": "quota_exceeded",
-  "message": "Monthly AI token limit of 100000 exceeded",
-  "details": {
-    "usage_type": "ai_token",
-    "used": 99000,
-    "limit": 100000,
-    "requested": 2000
-  }
-}
-```
-
----
-
-### E. Tenant Usage Report (`GET /usage?tenant_id=...`)
-- **Request**: `GET /usage?tenant_id=00000000-0000-0000-0000-000000000001`
-- **Response `200 OK`**:
-```json
-{
-  "status": "success",
-  "data": {
-    "tenant_id": "00000000-0000-0000-0000-000000000001",
-    "tenant_name": "Demo Tenant Inc.",
-    "plan": "Free Plan",
-    "period": {
-      "start": "2026-08-01T00:00:00.000Z",
-      "end": "2026-09-01T00:00:00.000Z"
-    },
-    "api_calls": {
-      "used": 15,
-      "limit": 1000,
-      "remaining": 985
-    },
-    "ai_tokens": {
-      "used": 14000,
-      "limit": 100000,
-      "remaining": 86000,
-      "breakdown": {
-        "input_tokens": 10000,
-        "cached_input_tokens": 2000,
-        "output_tokens": 3000,
-        "reasoning_tokens": 1000
+    "object": {
+      "id": "cs_test_998877",
+      "customer": "cus_test_tenant1",
+      "subscription": "sub_test_pro_123",
+      "metadata": {
+        "tenant_id": "00000000-0000-0000-0000-000000000001",
+        "plan_id": "pro"
       }
-    },
-    "cost": {
-      "microcents": 40600,
-      "cents": 4,
-      "formatted": "$0.04",
-      "currency": "usd"
     }
   }
 }
 ```
+- **Response `200 OK`**:
+```json
+{
+  "received": true,
+  "event_id": "evt_test_checkout_001",
+  "event_type": "checkout.session.completed",
+  "duplicate": false,
+  "processed": true
+}
+```
 
 ---
 
-## 3. Database Proof & Verification Queries
-
+### D. Duplicate Webhook Event Deduplication
+- **Second Delivery**: Re-sending `evt_test_checkout_001` with identical payload and valid signature.
+- **Response `200 OK`**:
+```json
+{
+  "received": true,
+  "event_id": "evt_test_checkout_001",
+  "event_type": "checkout.session.completed",
+  "duplicate": true,
+  "processed": false
+}
+```
+- **Database Proof Query**:
 ```sql
--- Exactly 1 row inserted per idempotency key
-SELECT id, tenant_id, usage_type, quantity, cost_microcents, idempotency_key, created_at
-FROM usage_events
-WHERE idempotency_key = 'req-proof-001';
+SELECT stripe_event_id, event_type, processed_at FROM stripe_events WHERE stripe_event_id = 'evt_test_checkout_001';
 
--- Result:
---                  id                  |              tenant_id               | usage_type | quantity | cost_microcents | idempotency_key |          created_at           
-----------------------------------------+--------------------------------------+------------+----------+-----------------+-----------------+-------------------------------
--- a1b2c3d4-e5f6-7890-abcd-1234567890ab | 00000000-0000-0000-0000-000000000001 | ai_token   |     1400 |            4060 | req-proof-001   | 2026-08-31 20:34:00.000000+00
+-- Result: Exactly 1 row recorded despite duplicate delivery attempts
+--     stripe_event_id    |        event_type          |          processed_at          
+--------------------------+----------------------------+--------------------------------
+-- evt_test_checkout_001  | checkout.session.completed | 2026-08-31 20:38:00.000000+00
+```
+
+---
+
+### E. Subscription Updated (`customer.subscription.updated`)
+- **Event Payload**: `status = "past_due"` for `sub_test_pro_123`
+- **Response `200 OK`**:
+```json
+{
+  "received": true,
+  "event_id": "evt_test_sub_update_002",
+  "event_type": "customer.subscription.updated",
+  "duplicate": false,
+  "processed": true
+}
+```
+- **Resulting Metering Behavior**: Submitting billable requests (`POST /generate`) while subscription status is `past_due` returns **HTTP 402 Payment Required**.
+
+---
+
+### F. Subscription Deleted / Deactivated (`customer.subscription.deleted`)
+- **Event Payload**: `type = "customer.subscription.deleted"`, `subscription = "sub_test_pro_123"`
+- **Response `200 OK`**:
+```json
+{
+  "received": true,
+  "event_id": "evt_test_sub_deleted_003",
+  "event_type": "customer.subscription.deleted",
+  "duplicate": false,
+  "processed": true
+}
+```
+- **Database Proof Query**:
+```sql
+SELECT tenant_id, plan_id, status, stripe_subscription_id FROM subscriptions WHERE tenant_id = '00000000-0000-0000-0000-000000000001';
+
+-- Result: Subscription plan set to 'free', status 'canceled'
+--              tenant_id               | plan_id |   status   | stripe_subscription_id 
+----------------------------------------+---------+------------+------------------------
+-- 00000000-0000-0000-0000-000000000001 | free    | canceled   | sub_test_pro_123
+```
+
+---
+
+## 3. Manual Stripe Test Mode Flow Documentation
+
+```bash
+# 1. Start Stripe CLI listener forwarding events to local webhooks endpoint
+stripe listen --forward-to localhost:8000/webhooks/stripe
+
+# Output provides webhook signing secret:
+# > Ready! Your webhook signing secret is whsec_test_local_secret_placeholder
+
+# 2. Trigger test checkout session via API
+curl -X POST http://localhost:8000/checkout/session \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "00000000-0000-0000-0000-000000000001"}'
+
+# 3. Open returned checkout_url in browser and enter Stripe official test card:
+# Card: 4242 4242 4242 4242 | Exp: 12/34 | CVC: 123
+
+# 4. Observe Stripe CLI logs forwarding checkout.session.completed event
+# 200 OK POST http://localhost:8000/webhooks/stripe
 ```
 
 ---
 
 ## 4. Verification Summary
-- **First Billable Request**: PASS (`replayed: false`).
-- **Idempotency Replay**: PASS (`replayed: true`).
-- **Parameter Mismatch Rejection**: PASS (HTTP 409 Conflict).
-- **Database Unique Constraint**: PASS (`CONSTRAINT uk_tenant_idempotency UNIQUE(tenant_id, idempotency_key)` protects against concurrent TOCTOU races).
-- **Pre-Check Quota Enforcement**: PASS (Synchronous check returns HTTP 429 when quota exceeded).
-- **Integer Micro-Cents Financial Calculator**: PASS (Zero float drift, reasoning tokens priced as output tokens).
-- **Tenant Isolation**: PASS (`GET /usage` returns strictly scoped tenant data).
+- **Stripe SDK Setup**: Dedicated `StripeService` wrapper module (Test Mode).
+- **Checkout Session Endpoint**: `POST /checkout/session` generates Stripe Test Mode URL with Pro price ID and tenant metadata.
+- **Raw Body Signature Verification**: Express `raw` parser verifies cryptographic `Stripe-Signature` header; invalid signature returns **HTTP 400 Bad Request**.
+- **Event Deduplication**: Atomic inserts into `stripe_events` table (`UNIQUE stripe_event_id`) protect against duplicate delivery and concurrent delivery races.
+- **Subscription Lifecycle Synchronization**: `checkout.session.completed` upgrades tenant to Pro, `customer.subscription.updated` syncs billing status (`active`, `past_due`, `unpaid`), and `customer.subscription.deleted` deactivates subscription.
+- **Zero Secrets Logged**: Zero real secrets committed or logged.

@@ -4,7 +4,7 @@
 - **Project**: LLM Usage Metering & Billing Engine
 - **Track**: FlyRank Internship Backend Track Capstone
 - **Core Technology Stack**: Node.js, Express, TypeScript, PostgreSQL (Docker Compose), Stripe API (Test Mode)
-- **Primary Goal**: Design and implement an accurate, high-concurrency, multi-tenant usage metering and billing infrastructure for API calls and AI tokens with exact quota guardrails and idempotent Stripe integration.
+- **Primary Goal**: Design and implement an accurate, high-concurrency, multi-tenant usage metering and billing infrastructure for API calls and AI tokens with exact quota guardrails, database-level idempotency, and signature-verified Stripe webhooks.
 
 ---
 
@@ -19,7 +19,6 @@
 - [x] **Idempotency & Race Condition Prevention**: Design PostgreSQL composite unique constraint strategy `UNIQUE(tenant_id, idempotency_key)`.
 - [x] **Pro Tier Limits & Pricing Model**: Define plan limits (Free vs Pro) and pinned micro-unit token rates.
 - [x] **API Specifications**: Define contracts for `POST /generate` and `GET /usage`.
-- [x] **Quota & Boundary Behavior**: Establish pre-check enforcement rules returning HTTP `429` / `402`.
 - [x] **Documentation & Phase 1 Validation**: Finalize baseline artifacts and Git commit `12a049d`.
 
 ---
@@ -34,25 +33,29 @@
 - [x] **Dummy Billable Endpoint (`POST /generate`)**: Implement endpoint supporting simulated AI token breakdowns and idempotency header validation.
 - [x] **Usage Reporting (`GET /usage`)**: Implement tenant-isolated usage aggregation endpoint.
 - [x] **Automated Test Suite**: Implement unit and integration tests covering pricing, idempotency, quota boundaries, and API validation.
-- [x] **Execution Proof & Documentation**: Create `EVIDENCE.md` with complete command outputs, API transcripts, test logs, and database query proofs.
+- [x] **Execution Proof**: Finalize `EVIDENCE.md` baseline and Git commit `4176646`.
 
 ---
 
-### Phase 3: Stripe Integration & System Hardening (Upcoming)
-- [ ] **Stripe Checkout Integration**: Implement `POST /checkout/session` for Pro upgrades.
-- [ ] **Stripe Webhook Listener**: Cryptographic raw body signature verification for `checkout.session.completed`, `customer.subscription.updated`, and `customer.subscription.deleted`.
-- [ ] **Webhook Event Deduplication**: Atomic inserts into `stripe_events` table (`stripe_event_id UNIQUE`).
-- [ ] **Background Reconciliation Job**: Monthly usage rollup and period state sync job.
-- [ ] **Final Security Scan & Verification**: Repository audit, test suite validation, and final project documentation.
+### Phase 3: Stripe Checkout & Verified Webhooks (COMPLETED - PASS)
+- [x] **Stripe SDK & Service Module**: Implement `StripeService` (`src/services/stripe.service.ts`) encapsulating official Node.js Stripe SDK API calls in Test Mode.
+- [x] **Checkout Endpoint (`POST /checkout/session`)**: Create session builder associating Pro plan price and tenant metadata, returning checkout URL.
+- [x] **Raw Body Webhook Parsing**: Configure Express `express.raw({ type: 'application/json' })` for `/webhooks/stripe` route handler.
+- [x] **Cryptographic Webhook Signature Verification**: Implement `stripe.webhooks.constructEvent()` validation returning HTTP 400 Bad Request on invalid HMAC signatures.
+- [x] **Database Webhook Deduplication**: Enforce atomic event deduplication via `stripe_events` table (`stripe_event_id UNIQUE`) protecting against duplicate delivery and concurrent delivery races.
+- [x] **Required Event Handlers**:
+  - `checkout.session.completed`: Upgrade tenant subscription to Pro plan (`plan_id = 'pro'`, `status = 'active'`).
+  - `customer.subscription.updated`: Synchronize local subscription status (`active`, `past_due`, `unpaid`).
+  - `customer.subscription.deleted`: Revert tenant plan to Free limits (`status = 'canceled'`).
+- [x] **Dynamic Quota Integration**: Connect Stripe subscription state synchronization directly to `MeterService` pre-check quota evaluation.
+- [x] **Stripe Test Suite**: Implement unit and integration tests in `src/tests/stripe.test.ts`.
+- [x] **Documentation & Verification Proof**: Update `EVIDENCE.md`, `README.md`, `JOB-CARD.md`, and complete Phase 3 Git checkpoint.
 
 ---
 
-## Phase 2 Deliverables Baseline
-1. `src/db/migrations/001_initial_schema.sql` (Schema DDL)
-2. `src/db/migrate.ts` & `src/db/seed.ts` (Migration & Seed runners)
-3. `src/services/pricing.service.ts` (Integer micro-cents token calculator)
-4. `src/services/meter.service.ts` (MeterService, quota pre-check & idempotency logic)
-5. `src/services/usage.service.ts` (Usage aggregation & reporting)
-6. `src/routes/generate.router.ts` & `src/routes/usage.router.ts` (API Endpoints)
-7. `src/tests/` (Automated unit & integration test suite)
-8. `EVIDENCE.md` (Detailed Phase 2 verification proof)
+## Deliverables Baseline Summary
+1. `src/services/stripe.service.ts` (Dedicated Stripe service layer)
+2. `src/routes/checkout.router.ts` & `src/routes/webhook.router.ts` (Checkout & Webhook API endpoints)
+3. `src/tests/stripe.test.ts` (Stripe integration test suite)
+4. `EVIDENCE.md` (Comprehensive execution proof)
+5. `README.md` & `JOB-CARD.md` (Project documentation & task checklist)
