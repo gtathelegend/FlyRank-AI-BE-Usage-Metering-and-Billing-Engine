@@ -10,7 +10,7 @@
     "dev": "node ./node_modules/tsx/dist/cli.mjs watch src/index.ts",
     "migrate": "node ./node_modules/tsx/dist/cli.mjs src/db/migrate.ts",
     "seed": "node ./node_modules/tsx/dist/cli.mjs src/db/seed.ts",
-    "test": "node ./node_modules/tsx/dist/cli.mjs --test src/tests/*.test.ts"
+    "test": "node ./node_modules/tsx/dist/cli.mjs --test src/tests/pricing.test.ts src/tests/meter.test.ts src/tests/api.test.ts src/tests/stripe.test.ts src/tests/live_verification.test.ts"
   },
   "keywords": [
     "metering",

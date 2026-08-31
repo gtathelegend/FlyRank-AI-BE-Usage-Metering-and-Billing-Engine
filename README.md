@@ -7,43 +7,46 @@ An enterprise-grade, high-concurrency **LLM Usage Metering & Billing Engine** bu
 
 ---
 
-## Technical Architecture & System Modules
+## Local Development & Docker Setup
 
-- **Backend Framework**: Node.js + Express with TypeScript
-- **Database**: PostgreSQL (via Docker Compose)
-- **Payment Provider**: Stripe API (Test Mode Only)
-- **Idempotency Engine**: PostgreSQL Composite Unique Constraint `UNIQUE(tenant_id, idempotency_key)`
-- **Webhook Deduplication**: PostgreSQL Unique Constraint `UNIQUE(stripe_event_id)`
-- **Financial Unit**: Integer Micro-Cents (1 Cent = 10,000 Micro-Cents, 1 USD = 1,000,000 Micro-Cents)
+### 1. Prerequisites & Environment Variables
+- Node.js (v18+)
+- Docker Desktop & Docker Compose
 
----
+Copy `.env.example` to `.env`:
+```bash
+cp .env.example .env
+```
 
-## Environment Variables Configuration
-
-Copy `.env.example` to `.env` and fill in Test Mode credentials:
-
+Ensure `.env` contains local placeholders:
 ```env
-# Server & Database Configuration
 PORT=8000
 NODE_ENV=development
 DATABASE_URL=postgresql://billing_user:billing_password@localhost:5432/flyrank_billing_db
-
-# Stripe API Keys (TEST MODE ONLY - Server-only secrets)
 STRIPE_SECRET_KEY=sk_test_51PlaceholderSecretKeyDoNotCommit12345
 STRIPE_WEBHOOK_SECRET=whsec_PlaceholderWebhookSecretDoNotCommit12345
 STRIPE_PRICE_PRO=price_1PlaceholderProPriceId12345
 ```
 
+> [!NOTE]
+> **Docker Credential Helper Troubleshooting (Windows)**:
+> If `docker compose up -d` fails with `error getting credentials - err: exec: "docker-credential-desktop": executable file not found in %PATH%`, safely remove `"credsStore": "desktop"` from `%USERPROFILE%\.docker\config.json`.
+
 ---
 
-## Quick Start & Execution Guide
+## Quick Start Command Sequence
 
 ### 1. Start Local PostgreSQL Database
 ```bash
-docker-compose up -d
+docker compose up -d
+```
+Verify container status:
+```bash
+docker compose ps
+# Container flyrank_billing_postgres should show as (healthy)
 ```
 
-### 2. Install Dependencies & Compile Project
+### 2. Install Dependencies & Build
 ```bash
 npm install
 npm run build
@@ -54,6 +57,7 @@ npm run build
 npm run migrate
 npm run seed
 ```
+> The seed command is 100% idempotent and can be safely re-run at any time.
 
 ### 4. Start Local Development Server
 ```bash
@@ -86,8 +90,8 @@ npm test
      -d '{"tenant_id": "00000000-0000-0000-0000-000000000001"}'
    ```
 2. Open the returned `checkout_url` in a browser.
-3. Complete the checkout using Stripe's official test card (`4242 4242 4242 4242`, Exp: `12/34`, CVC: `123`).
-4. Stripe CLI forwards the `checkout.session.completed` event to `/webhooks/stripe`.
+3. Complete checkout using Stripe's official test card (`4242 4242 4242 4242`, Exp: `12/34`, CVC: `123`).
+4. Stripe CLI forwards `checkout.session.completed` event to `/webhooks/stripe`.
 5. The local engine verifies the raw body HMAC signature, records the event in `stripe_events`, and upgrades the tenant's subscription to the Pro plan.
 
 ---
