@@ -39,10 +39,19 @@ export function errorHandler(err: any, req: Request, res: Response, next: NextFu
     });
   }
 
+  // Handle Stripe SDK specific errors gracefully
+  if (err.type && (err.type.startsWith('Stripe') || err.name?.includes('Stripe'))) {
+    return res.status(400).json({
+      error: 'stripe_error',
+      message: err.message,
+      type: err.type,
+    });
+  }
+
   console.error('[Unhandled Internal Error]:', err);
 
   return res.status(500).json({
     error: 'internal_server_error',
-    message: 'An unexpected internal error occurred. Please try again later.',
+    message: err.message || 'An unexpected internal error occurred. Please try again later.',
   });
 }

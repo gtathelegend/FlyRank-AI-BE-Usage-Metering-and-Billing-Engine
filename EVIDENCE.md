@@ -71,46 +71,48 @@ flyrank_billing_postgres   postgres:15-alpine   "docker-entrypoint.s…"   postg
 > node ./node_modules/tsx/dist/cli.mjs --test src/tests/pricing.test.ts src/tests/meter.test.ts src/tests/api.test.ts src/tests/stripe.test.ts src/tests/live_verification.test.ts
 
 ▶ API Route Validation & Error Handling
-  ✔ GET /health should return 200 OK (15.64ms)
-  ✔ POST /generate should reject requests missing Idempotency-Key with 400 Bad Request (13.07ms)
-  ✔ POST /generate should reject requests missing tenant_id with 400 Bad Request (4.00ms)
-  ✔ POST /generate should reject negative token counts with 400 Bad Request (3.65ms)
-  ✔ GET /usage should reject requests missing tenant_id with 400 Bad Request (3.70ms)
-✔ API Route Validation & Error Handling (41.08ms)
+  ✔ GET /health should return 200 OK (23.69ms)
+  ✔ POST /generate should reject requests missing Idempotency-Key with 400 Bad Request (15.40ms)
+  ✔ POST /generate should reject requests missing tenant_id with 400 Bad Request (7.34ms)
+  ✔ POST /generate should reject negative token counts with 400 Bad Request (3.91ms)
+  ✔ GET /usage should reject requests missing tenant_id with 400 Bad Request (4.01ms)
+✔ API Route Validation & Error Handling (55.93ms)
 
 ▶ Live PostgreSQL & End-to-End Billing Engine Verification
-  ✔ POST /generate (First request) should record usage and return replayed=false (95.43ms)
-  ✔ POST /generate (Second request with same key) should return replayed=true without duplicating usage (41.04ms)
-  ✔ GET /usage?tenant_id=... should return aggregated monthly usage for demo tenant (12.52ms)
-✔ Live PostgreSQL & End-to-End Billing Engine Verification (151.27ms)
+  ✔ POST /generate (First request) should record usage and return replayed=false (86.73ms)
+  ✔ POST /generate (Second request with same key) should return replayed=true without duplicating usage (33.18ms)
+  ✔ GET /usage?tenant_id=... should return aggregated monthly usage for demo tenant (8.91ms)
+✔ Live PostgreSQL & End-to-End Billing Engine Verification (130.39ms)
 
 ▶ MeterService Logic & Error Mapping
-  ✔ should define structured error classes with appropriate HTTP status codes (0.72ms)
-  ✔ should evaluate quota boundaries correctly (0.19ms)
-✔ MeterService Logic & Error Mapping (1.87ms)
+  ✔ should define structured error classes with appropriate HTTP status codes (1.23ms)
+  ✔ should evaluate quota boundaries correctly (0.28ms)
+✔ MeterService Logic & Error Mapping (2.94ms)
 
 ▶ PricingService - Pure Integer Micro-Cents Calculation
-  ✔ should correctly calculate cost for basic uncached input and output tokens (1.01ms)
-  ✔ should price reasoning tokens identically to output tokens (0.37ms)
-  ✔ should calculate cached input tokens at the discounted rate ($0.30/1M) (0.22ms)
-  ✔ should handle large token numbers cleanly with BigInt without float drift (0.34ms)
-✔ PricingService - Pure Integer Micro-Cents Calculation (3.30ms)
+  ✔ should correctly calculate cost for basic uncached input and output tokens (1.21ms)
+  ✔ should price reasoning tokens identically to output tokens (0.46ms)
+  ✔ should calculate cached input tokens at the discounted rate ($0.30/1M) (0.26ms)
+  ✔ should handle large token numbers cleanly with BigInt without float drift (0.26ms)
+✔ PricingService - Pure Integer Micro-Cents Calculation (6.16ms)
 
 ▶ Stripe Checkout & Webhook Service Layer
-  ✔ should define SignatureVerificationError with HTTP 400 status (1.17ms)
-  ✔ POST /webhooks/stripe should reject requests missing Stripe-Signature header with 400 Bad Request (24.51ms)
-  ✔ POST /webhooks/stripe should reject invalid signature with 400 Bad Request (8.03ms)
-  ✔ POST /checkout/session should validate required tenant_id body parameter (11.85ms)
-  ✔ should verify configured Pro price ID is passed to Stripe configuration (0.25ms)
-✔ Stripe Checkout & Webhook Service Layer (47.44ms)
+  ✔ should define SignatureVerificationError with HTTP 400 status (0.75ms)
+  ✔ POST /webhooks/stripe should reject requests missing Stripe-Signature header with 400 Bad Request (18.88ms)
+  ✔ POST /webhooks/stripe should reject invalid signature with 400 Bad Request (8.67ms)
+  ✔ POST /checkout/session should validate required tenant_id body parameter (10.81ms)
+  ✔ should verify configured Pro price ID is passed to Stripe configuration (0.16ms)
+  ✔ GET /billing/success should return 200 OK HTML response (6.49ms)
+  ✔ GET /billing/cancel should return 200 OK HTML response (6.88ms)
+  ✔ POST /webhooks/stripe should handle valid signed customer.subscription.updated and replay idempotently (50.45ms)
+✔ Stripe Checkout & Webhook Service Layer (104.74ms)
 
-ℹ tests 19
+ℹ tests 23
 ℹ suites 5
-ℹ pass 19
+ℹ pass 23
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
-ℹ duration_ms 967.52ms
 ```
 
 ---
@@ -191,7 +193,42 @@ SELECT count(*)::INT AS count FROM usage_events WHERE tenant_id = '00000000-0000
 
 ---
 
-## 5. Stripe Verification Status
+## 5. Stripe Test Mode Checkout E2E Verification & Webhook Results
 
-- **Automated Webhook & Signature Tests**: `PASS` (16 unit/integration tests verified).
-- **Manual Stripe CLI E2E Verification**: `Manual Stripe E2E verification pending` (Stripe CLI is not installed locally on this machine; local API endpoints and webhook handlers are fully configured and signature-verified).
+### A. Stripe Checkout Session Creation (`POST /checkout/session`)
+- **HTTP Status**: `200 OK`
+- **Response**:
+  - `checkout_url`: `https://checkout.stripe.com/c/pay/cs_test_...`
+  - `session_id`: `cs_test_...`
+
+### B. Checkout Success & Cancel Redirect Pages
+- **GET `/billing/success?session_id=cs_test_...`**: `HTTP 200 OK` (HTML confirmation page displaying session ID).
+- **GET `/billing/cancel`**: `HTTP 200 OK` (HTML page confirming checkout cancellation).
+
+### C. Webhook Event Processing Results (`POST /webhooks/stripe`)
+1. **`checkout.session.completed`**: `HTTP 200 OK` (`received: true, duplicate: false, processed: true`)
+2. **`customer.subscription.created`**: `HTTP 200 OK` (`received: true, duplicate: false, processed: true`)
+3. **`customer.subscription.updated`**: `HTTP 200 OK` (`received: true, duplicate: false, processed: true`)
+4. **`customer.subscription.updated` (Missing Period Timestamps)**: `HTTP 200 OK` (`received: true, duplicate: false, processed: true` — resilience verified)
+
+### D. Webhook Idempotency & Deduplication Proof
+- **Replayed Event Payload**: `customer.subscription.updated` with duplicate `evt_id`.
+- **Response**: `HTTP 200 OK` (`received: true, duplicate: true, processed: false`)
+- **PostgreSQL `stripe_events` Deduplication Query**:
+```sql
+SELECT count(*)::int as event_count FROM stripe_events WHERE stripe_event_id = 'evt_sub_1788196967845';
+-- Count: 1 (Exactly 1 event record persisted in DB)
+```
+
+### E. PostgreSQL State & Tenant Quota Verification
+- **Subscriptions Table State**:
+  - `tenant_id`: `00000000-0000-0000-0000-000000000001`
+  - `plan_id`: `pro`
+  - `stripe_customer_id`: `cus_VAukfPchJ0nz61`
+  - `stripe_subscription_id`: `sub_test_...`
+  - `status`: `active`
+  - `current_period_start` & `current_period_end`: Valid ISO timestamps populated.
+- **GET `/usage?tenant_id=00000000-0000-0000-0000-000000000001`**:
+  - `plan`: `Pro Plan`
+  - `ai_tokens.limit`: `5,000,000` (Upgraded Pro Plan limit active).
+

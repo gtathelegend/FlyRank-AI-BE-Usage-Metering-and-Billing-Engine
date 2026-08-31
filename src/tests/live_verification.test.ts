@@ -1,13 +1,17 @@
-import { describe, it, after } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
 import { createApp } from '../app.js';
 import { pool } from '../config/database.js';
-import { DEMO_TENANT_ID } from '../db/seed.js';
+import { DEMO_TENANT_ID, seedDatabase } from '../db/seed.js';
 
 const app = createApp();
 
 describe('Live PostgreSQL & End-to-End Billing Engine Verification', () => {
+  before(async () => {
+    await seedDatabase();
+  });
+
   after(async () => {
     await pool.end();
   });

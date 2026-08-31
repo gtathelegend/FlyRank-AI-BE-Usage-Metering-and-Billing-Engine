@@ -149,6 +149,7 @@ export class StripeService {
           break;
         }
 
+        case 'customer.subscription.created':
         case 'customer.subscription.updated': {
           const subscription = event.data.object as Stripe.Subscription;
           await this.processSubscriptionUpdated(client, subscription);
@@ -197,47 +198,105 @@ export class StripeService {
     const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-    // Upsert subscription to Pro plan
-    await client.query(`
-      INSERT INTO subscriptions (
-        tenant_id, plan_id, stripe_customer_id, stripe_subscription_id, 
-        status, current_period_start, current_period_end, updated_at
-      ) VALUES ($1, 'pro', $2, $3, 'active', $4, $5, CURRENT_TIMESTAMP)
-      ON CONFLICT (stripe_subscription_id) DO UPDATE SET
-        plan_id = 'pro',
-        status = 'active',
-        stripe_customer_id = EXCLUDED.stripe_customer_id,
-        current_period_start = EXCLUDED.current_period_start,
-        current_period_end = EXCLUDED.current_period_end,
-        updated_at = CURRENT_TIMESTAMP;
+    // 1. Try to update existing subscription row (matching sub ID or null sub ID for tenant)
+    const updateRes = await client.query(`
+      UPDATE subscriptions 
+      SET 
+        plan_id = 'pro', 
+        status = 'active', 
+        stripe_customer_id = COALESCE($2, stripe_customer_id), 
+        stripe_subscription_id = COALESCE($3, stripe_subscription_id), 
+        current_period_start = $4,
+        current_period_end = $5,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE (stripe_subscription_id IS NOT NULL AND stripe_subscription_id = $3)
+         OR (tenant_id = $1 AND stripe_subscription_id IS NULL);
     `, [tenantId, stripeCustomerId, stripeSubscriptionId, periodStart.toISOString(), periodEnd.toISOString()]);
 
-    // Update existing records for tenant if necessary
-    await client.query(`
-      UPDATE subscriptions 
-      SET plan_id = 'pro', status = 'active', stripe_customer_id = $2, stripe_subscription_id = $3, updated_at = CURRENT_TIMESTAMP
-      WHERE tenant_id = $1 AND (stripe_subscription_id IS NULL OR stripe_subscription_id = $3);
-    `, [tenantId, stripeCustomerId, stripeSubscriptionId]);
+    // 2. If no existing row found, insert new subscription record
+    if (updateRes.rowCount === 0) {
+      await client.query(`
+        INSERT INTO subscriptions (
+          tenant_id, plan_id, stripe_customer_id, stripe_subscription_id, 
+          status, current_period_start, current_period_end, updated_at
+        ) VALUES ($1, 'pro', $2, $3, 'active', $4, $5, CURRENT_TIMESTAMP);
+      `, [tenantId, stripeCustomerId, stripeSubscriptionId, periodStart.toISOString(), periodEnd.toISOString()]);
+    }
   }
 
   private static async processSubscriptionUpdated(client: any, subscription: Stripe.Subscription) {
     const stripeSubscriptionId = subscription.id;
-    const stripeCustomerId = subscription.customer as string;
-    const status = subscription.status; // 'active', 'past_due', 'unpaid', 'canceled', etc.
+    const stripeCustomerId = typeof subscription.customer === 'string'
+      ? subscription.customer
+      : (subscription.customer as any)?.id || null;
+    const status = subscription.status || 'active'; // 'active', 'past_due', 'unpaid', 'canceled', etc.
 
-    const periodStart = new Date(subscription.current_period_start * 1000);
-    const periodEnd = new Date(subscription.current_period_end * 1000);
+    const rawStart = (subscription as any).current_period_start;
+    const rawEnd = (subscription as any).current_period_end;
 
-    await client.query(`
-      UPDATE subscriptions
+    let periodStart = rawStart && !isNaN(Number(rawStart)) ? new Date(Number(rawStart) * 1000) : new Date();
+    let periodEnd = rawEnd && !isNaN(Number(rawEnd)) ? new Date(Number(rawEnd) * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    if (isNaN(periodStart.getTime())) {
+      periodStart = new Date();
+    }
+    if (isNaN(periodEnd.getTime())) {
+      periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    }
+
+    // Attempt tenant mapping: existing sub record, sub metadata, or customer record
+    const existingSub = await client.query(
+      `SELECT tenant_id FROM subscriptions WHERE stripe_subscription_id = $1 LIMIT 1;`,
+      [stripeSubscriptionId]
+    );
+
+    let tenantId: string | null = existingSub.rows.length > 0 ? existingSub.rows[0].tenant_id : null;
+
+    if (!tenantId && subscription.metadata?.tenant_id) {
+      tenantId = subscription.metadata.tenant_id;
+    }
+
+    if (!tenantId && stripeCustomerId) {
+      const custSub = await client.query(
+        `SELECT tenant_id FROM subscriptions WHERE stripe_customer_id = $1 LIMIT 1;`,
+        [stripeCustomerId]
+      );
+      if (custSub.rows.length > 0) {
+        tenantId = custSub.rows[0].tenant_id;
+      }
+    }
+
+    if (!tenantId) {
+      console.warn(`[Stripe Webhook] customer.subscription.updated received for unmapped tenant/subscription: ${stripeSubscriptionId}`);
+      return;
+    }
+
+    const planId = (subscription.metadata?.plan_id as string) || (status === 'canceled' ? 'free' : 'pro');
+
+    // Update existing subscription record if available
+    const updateRes = await client.query(`
+      UPDATE subscriptions 
       SET 
-        status = $1,
-        stripe_customer_id = $2,
-        current_period_start = $3,
-        current_period_end = $4,
+        plan_id = $2, 
+        status = $5, 
+        stripe_customer_id = COALESCE($3, stripe_customer_id), 
+        stripe_subscription_id = COALESCE($4, stripe_subscription_id), 
+        current_period_start = $6,
+        current_period_end = $7,
         updated_at = CURRENT_TIMESTAMP
-      WHERE stripe_subscription_id = $5;
-    `, [status, stripeCustomerId, periodStart.toISOString(), periodEnd.toISOString(), stripeSubscriptionId]);
+      WHERE (stripe_subscription_id IS NOT NULL AND stripe_subscription_id = $4)
+         OR (tenant_id = $1 AND stripe_subscription_id IS NULL);
+    `, [tenantId, planId, stripeCustomerId, stripeSubscriptionId, status, periodStart.toISOString(), periodEnd.toISOString()]);
+
+    // Insert new subscription record if tenant had no existing row
+    if (updateRes.rowCount === 0) {
+      await client.query(`
+        INSERT INTO subscriptions (
+          tenant_id, plan_id, stripe_customer_id, stripe_subscription_id, 
+          status, current_period_start, current_period_end, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP);
+      `, [tenantId, planId, stripeCustomerId, stripeSubscriptionId, status, periodStart.toISOString(), periodEnd.toISOString()]);
+    }
   }
 
   private static async processSubscriptionDeleted(client: any, subscription: Stripe.Subscription) {

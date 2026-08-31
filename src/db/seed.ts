@@ -35,12 +35,10 @@ export async function seedDatabase() {
     const startOfPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfPeriod = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
+    await client.query('DELETE FROM subscriptions WHERE tenant_id = $1;', [DEMO_TENANT_ID]);
     await client.query(`
       INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_start, current_period_end)
-      SELECT $1, 'free', 'active', $2, $3
-      WHERE NOT EXISTS (
-        SELECT 1 FROM subscriptions WHERE tenant_id = $1 AND status = 'active'
-      );
+      VALUES ($1, 'free', 'active', $2, $3);
     `, [DEMO_TENANT_ID, startOfPeriod.toISOString(), endOfPeriod.toISOString()]);
 
     await client.query('COMMIT');

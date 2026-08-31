@@ -5,6 +5,8 @@ import { checkoutRouter } from './routes/checkout.router.js';
 import { webhookRouter } from './routes/webhook.router.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
+import { billingRouter } from './routes/billing.router.js';
+
 export function createApp(): Express {
   const app = express();
 
@@ -20,6 +22,7 @@ export function createApp(): Express {
   });
 
   // Core Billing API Routes
+  app.use('/billing', billingRouter);
   app.use('/checkout', checkoutRouter);
   app.use('/generate', generateRouter);
   app.use('/usage', usageRouter);

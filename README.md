@@ -111,19 +111,24 @@ npm test
 }
 ```
 
-### 2. `POST /webhooks/stripe` (Raw Body Signature Verified Webhook Listener)
+### 2. `GET /billing/success` & `GET /billing/cancel` (Checkout Redirect Pages)
+- **GET `/billing/success?session_id=cs_test_...`**: Returns HTTP 200 with an HTML confirmation page confirming subscription activation.
+- **GET `/billing/cancel`**: Returns HTTP 200 with an HTML page confirming checkout cancellation.
+
+### 3. `POST /webhooks/stripe` (Raw Body Signature Verified Webhook Listener)
 - **Headers**: `Stripe-Signature: t=...,v1=...`
 - **Body**: Raw JSON Buffer payload.
 - **Handled Events**:
   - `checkout.session.completed`: Upgrades tenant plan to `pro` and assigns `stripe_subscription_id`.
-  - `customer.subscription.updated`: Syncs state (`active`, `past_due`, `unpaid`).
+  - `customer.subscription.created`: Syncs subscription state.
+  - `customer.subscription.updated`: Syncs state (`active`, `past_due`, `unpaid`). Safely handles missing timestamps and unmapped subscriptions.
   - `customer.subscription.deleted`: Reverts tenant plan to `free` limits and marks status `canceled`.
 
-### 3. `POST /generate` (Dummy Billable Endpoint)
+### 4. `POST /generate` (Dummy Billable Endpoint)
 - **Headers**: `Idempotency-Key: <unique-uuid>`
 - **Body**: `{ "tenant_id": "...", "input_tokens": 1000, "cached_input_tokens": 200, "output_tokens": 500, "reasoning_tokens": 100 }`
 
-### 4. `GET /usage?tenant_id=<uuid>` (Tenant Usage Report)
+### 5. `GET /usage?tenant_id=<uuid>` (Tenant Usage Report)
 - Returns current monthly usage breakdown, quota limits, remaining balance, and cost in micro-cents and USD.
 
 ---
