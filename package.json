@@ -1,0 +1,39 @@
+{
+  "name": "flyrank-billing-engine",
+  "version": "1.0.0",
+  "description": "LLM Usage Metering & Billing Engine Capstone Project",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "jest --passWithNoTests"
+  },
+  "keywords": [
+    "metering",
+    "billing",
+    "stripe",
+    "llm",
+    "express",
+    "typescript",
+    "postgresql"
+  ],
+  "author": "FlyRank Intern",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.11.5",
+    "stripe": "^14.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.11.30",
+    "@types/pg": "^8.11.4",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.2",
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.3"
+  }
+}
